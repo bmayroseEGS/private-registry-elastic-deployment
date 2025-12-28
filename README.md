@@ -4,54 +4,109 @@ Complete solution for deploying Elastic Stack (Elasticsearch, Kibana, Logstash) 
 
 ## Overview
 
-This project provides a complete workflow for deploying Elastic Stack in environments without internet access:
+This project provides a complete workflow for deploying the full Elastic Stack in air-gapped environments:
 
-1. **Image Collection** - Collect and package container images on internet-connected machine
-2. **Registry Deployment** - Deploy local Docker registry and load images on air-gapped machine
-3. **Kubernetes Deployment** - Deploy Elasticsearch to Kubernetes using Helm charts
+1. **Infrastructure Setup** - Install k3s Kubernetes and essential tools (air-gapped)
+2. **Image Collection** - Collect container images and binaries on internet-connected machine
+3. **Registry Deployment** - Deploy local Docker registry and load images on air-gapped machine
+4. **Stack Deployment** - Deploy Elasticsearch, Kibana, and Logstash to Kubernetes using Helm charts
 
 ## Quick Start
 
-### Phase 1: Collect Images (Internet-connected machine)
+### Phase 1: Collect Binaries & Images (Internet-connected machine)
 ```bash
-cd epr_deployment
-./collect-images.sh
-# Follow prompts to enter image URLs
-# Images saved to images/*.tar
+cd deployment_infrastructure
+./collect-all.sh
+# Collects: k3s, Helm, container images
+# Saves to: k3s-files/, helm-files/, ../epr_deployment/images/
 ```
 
-### Phase 2: Transfer & Deploy Registry (Air-gapped machine)
+### Phase 2: Transfer to Air-gapped Machine
 ```bash
-# Transfer images/ directory to air-gapped machine
+# Transfer entire project directory to air-gapped machine
+scp -r private-registry-elastic-deployment/ user@airgapped:/path/to/
+```
+
+### Phase 3: Setup Infrastructure (Air-gapped machine)
+```bash
+# Optional: Setup machine with essential tools
+./deployment_infrastructure/setup-machine.sh
+
+# Install k3s Kubernetes
+./deployment_infrastructure/install-k3s-airgap.sh
+
+# Deploy local Docker registry
 cd epr_deployment
 ./epr.sh
-# Registry deployed at localhost:5000
+# Registry deployed at localhost:5000 with all images loaded
 ```
 
-### Phase 3: Deploy to Kubernetes
+### Phase 4: Deploy Elastic Stack
 ```bash
 cd helm_charts
 ./deploy.sh
-# Elasticsearch deployed to Kubernetes
+# Interactively prompts for:
+# - Elasticsearch (y/n)
+# - Kibana (y/n)
+# - Logstash (y/n)
 ```
 
 ## Project Structure
 
 ```
-├── epr_deployment/           # Container registry deployment
-│   ├── collect-images.sh    # Collect images from internet
-│   ├── epr.sh               # Deploy local registry
-│   ├── nuke_registry.sh     # Cleanup script
-│   └── images/              # Collected .tar files (gitignored)
+.
+├── deployment_infrastructure/      # Air-gapped deployment infrastructure
+│   ├── collect-all.sh             # Collect all binaries and images
+│   ├── install-k3s-airgap.sh      # Install k3s in air-gapped mode
+│   ├── setup-machine.sh           # Initial machine setup
+│   ├── uninstall-k3s-complete.sh  # Complete k3s removal
+│   ├── GETTING-STARTED.md         # Getting started guide
+│   ├── QUICK-START.md             # Quick reference
+│   └── SCRIPTS-REFERENCE.md       # Scripts documentation
 │
-├── helm_charts/             # Kubernetes Helm charts
-│   ├── deploy.sh            # Kubernetes deployment script
-│   └── elasticsearch/       # Elasticsearch Helm chart
+├── epr_deployment/                 # Elastic Private Registry deployment
+│   ├── epr.sh                     # Deploy local Docker registry
+│   ├── nuke_registry.sh           # Cleanup registry
+│   ├── README.md                  # Registry documentation
+│   ├── COLLECT-ALL-README.md      # Image collection guide
+│   ├── .gitignore                 # Ignore images directory
+│   └── images/                    # Container images (gitignored)
+│
+├── helm_charts/                    # Kubernetes Helm charts
+│   ├── deploy.sh                  # Interactive deployment script
+│   ├── README.md                  # Helm charts documentation
+│   ├── QUICKSTART.md              # Quick reference
+│   │
+│   ├── elasticsearch/             # Elasticsearch Helm chart
+│   │   ├── Chart.yaml
+│   │   ├── values.yaml
+│   │   └── templates/
+│   │       ├── NOTES.txt
+│   │       ├── configmap.yaml
+│   │       ├── service.yaml
+│   │       └── statefulset.yaml
+│   │
+│   ├── kibana/                    # Kibana Helm chart
+│   │   ├── Chart.yaml
+│   │   ├── values.yaml
+│   │   └── templates/
+│   │       ├── NOTES.txt
+│   │       ├── configmap.yaml
+│   │       ├── deployment.yaml
+│   │       └── service.yaml
+│   │
+│   └── logstash/                  # Logstash Helm chart
 │       ├── Chart.yaml
-│       ├── values.yaml      # Configuration
-│       └── templates/       # K8s manifests
+│       ├── values.yaml
+│       └── templates/
+│           ├── NOTES.txt
+│           ├── configmap-config.yaml
+│           ├── configmap-pipeline.yaml
+│           ├── service.yaml
+│           └── statefulset.yaml
 │
-└── DEPLOYMENT-WORKFLOW.md   # Complete workflow guide
+├── DEPLOYMENT-WORKFLOW.md          # Complete workflow guide
+└── README.md                       # This file
 ```
 
 ## Documentation
@@ -97,62 +152,174 @@ cd helm_charts
 ## Architecture
 
 ```
-Internet Machine          Air-gapped Machine              Kubernetes Cluster
-┌──────────────┐         ┌──────────────────┐           ┌─────────────────┐
-│              │         │                  │           │                 │
-│ collect-     │  .tar   │  epr.sh          │  images   │  deploy.sh      │
-│ images.sh    │-------->│  ↓               │---------->│  ↓              │
-│              │  files  │  Local Registry  │           │  Elasticsearch  │
-│              │         │  localhost:5000  │           │  Pods           │
-└──────────────┘         └──────────────────┘           └─────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          Internet-Connected Machine                         │
+│                                                                              │
+│  deployment_infrastructure/collect-all.sh                                   │
+│  ├── Downloads k3s binary + airgap images                                   │
+│  ├── Downloads Helm binary                                                  │
+│  └── Downloads Elastic Stack images (ES, Kibana, Logstash, Registry)        │
+│                                                                              │
+│  Output: k3s-files/, helm-files/, epr_deployment/images/                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    │ scp/rsync transfer
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            Air-gapped Machine                                │
+│                                                                              │
+│  ┌────────────────────────┐    ┌──────────────────┐    ┌─────────────────┐ │
+│  │ Infrastructure Setup   │    │ Registry Setup   │    │ Stack Deploy    │ │
+│  │                        │    │                  │    │                 │ │
+│  │ install-k3s-airgap.sh  │───→│ epr.sh           │───→│ deploy.sh       │ │
+│  │ ├── Install k3s        │    │ ├── Start        │    │ ├── Elasticsearch│ │
+│  │ ├── Setup kubectl      │    │ │   registry     │    │ ├── Kibana      │ │
+│  │ └── Start cluster      │    │ └── Load images  │    │ └── Logstash    │ │
+│  └────────────────────────┘    └──────────────────┘    └─────────────────┘ │
+│                                                                              │
+│  Kubernetes Cluster (k3s)          Docker Registry          Helm Charts     │
+│  namespace: elastic                localhost:5000           Interactive     │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    │ SSH tunnel + kubectl port-forward
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            Local Developer Machine                           │
+│                                                                              │
+│  Browser: http://localhost:5601 → Kibana UI                                 │
+│  curl http://localhost:9200      → Elasticsearch API                        │
+│  curl http://localhost:8080      → Logstash HTTP input                      │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
-
+## After Cloning the Repo
+```bash
+# 1. Change the permissions for the scripts
+chmod +x deployment_infrastructure/collect-all.sh deployment_infrastructure/install-k3s-airgap.sh deployment_infrastructure/setup-machine.sh deployment_infrastructure/uninstall-k3s-complete.sh epr_deployment/epr.sh epr_deployment/nuke_registry.sh
+```
 ## Example Workflow
 
 ```bash
-# 1. On internet-connected machine
-cd epr_deployment
-./collect-images.sh
-# Enter: docker.elastic.co/elasticsearch/elasticsearch:9.2.2
-# Enter: docker.elastic.co/kibana/kibana:9.2.2
-# Enter: registry:2
-# Press Enter to finish
+# 1. On internet-connected machine - collect everything
+cd deployment_infrastructure
+./collect-all.sh
+# Script downloads:
+# - k3s binary and images
+# - Helm binary
+# - Elasticsearch, Kibana, Logstash images
+# - Docker registry image
 
-# 2. Transfer images/ to air-gapped machine
-scp -r images/ user@airgapped:/path/to/epr_deployment/
+# 2. Transfer entire project to air-gapped machine
+scp -r private-registry-elastic-deployment/ user@airgapped:~/
 
-# 3. On air-gapped machine - deploy registry
+# 3. On air-gapped machine - setup infrastructure
+cd private-registry-elastic-deployment
+
+# Install k3s
+./deployment_infrastructure/install-k3s-airgap.sh
+# k3s installed and running
+
+# Deploy Docker registry with images
 cd epr_deployment
 ./epr.sh
-# Registry starts at localhost:5000 with all images loaded
+# Registry running at localhost:5000 with all images loaded
 
-# 4. Deploy to Kubernetes
+# 4. Deploy Elastic Stack
 cd ../helm_charts
 ./deploy.sh
-# Elasticsearch deployed to 'elastic' namespace
+# Prompts:
+# Deploy Elasticsearch? (y/n): y
+# Deploy Kibana? (y/n): y
+# Deploy Logstash? (y/n): y
 
-# 5. Access Elasticsearch
-kubectl port-forward -n elastic svc/elasticsearch-master 9200:9200
+# 5. Verify deployment
+kubectl get all -n elastic
+# All pods should be Running
+
+# 6. Access services
+# Elasticsearch
+kubectl port-forward -n elastic svc/elasticsearch-master 9200:9200 &
 curl http://localhost:9200
+
+# Kibana (from local machine via SSH tunnel)
+ssh -i "key.pem" -L 5601:localhost:5601 ubuntu@your-server
+kubectl port-forward -n elastic svc/kibana 5601:5601
+# Open browser: http://localhost:5601
+
+# Logstash
+kubectl port-forward -n elastic svc/logstash 8080:8080 &
+curl -X POST http://localhost:8080 -H 'Content-Type: application/json' -d '{"message":"test"}'
 ```
 
 ## Configuration
 
-### Registry Configuration
-Edit images in [epr_deployment/sample-image-list.txt](epr_deployment/sample-image-list.txt)
+### Container Images
+All components use images from the local registry at `localhost:5000`:
+- Elasticsearch: `localhost:5000/elasticsearch:9.2.2`
+- Kibana: `localhost:5000/kibana:9.2.2`
+- Logstash: `localhost:5000/logstash:9.2.2`
 
-### Kubernetes Configuration
-Edit [helm_charts/elasticsearch/values.yaml](helm_charts/elasticsearch/values.yaml):
+### Helm Chart Configuration
+
+**Elasticsearch** - [helm_charts/elasticsearch/values.yaml](helm_charts/elasticsearch/values.yaml):
 ```yaml
 image:
-  registry: localhost:5000  # Local registry
-  tag: "9.2.2"             # Version
+  registry: localhost:5000
+  repository: elasticsearch
+  tag: "9.2.2"
 
-replicas: 1                # Start with 1, scale to 3+
+replicas: 1                 # Start with 1, scale to 3+
 
 resources:
+  requests:
+    cpu: "1000m"
+    memory: "2Gi"
   limits:
-    memory: "4Gi"          # Adjust as needed
+    cpu: "2000m"
+    memory: "4Gi"
+
+persistence:
+  enabled: true
+  size: 30Gi
+```
+
+**Kibana** - [helm_charts/kibana/values.yaml](helm_charts/kibana/values.yaml):
+```yaml
+image:
+  registry: localhost:5000
+  repository: kibana
+  tag: "9.2.2"
+
+replicas: 1
+
+resources:
+  requests:
+    cpu: "500m"
+    memory: "1Gi"
+  limits:
+    cpu: "1000m"
+    memory: "2Gi"
+
+elasticsearchHosts: "http://elasticsearch-master:9200"
+```
+
+**Logstash** - [helm_charts/logstash/values.yaml](helm_charts/logstash/values.yaml):
+```yaml
+image:
+  registry: localhost:5000
+  repository: logstash
+  tag: "9.2.2"
+
+replicas: 1
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "512Mi"
+  limits:
+    cpu: "500m"
+    memory: "1Gi"
+
+elasticsearchHosts: "http://elasticsearch-master:9200"
 ```
 
 ## Scaling to Production
@@ -199,23 +366,130 @@ kubectl get events -n elastic
 ## Cleanup
 
 ```bash
-# Remove Kubernetes deployment
+# Remove individual components
 helm uninstall elasticsearch -n elastic
+helm uninstall kibana -n elastic
+helm uninstall logstash -n elastic
+
+# Or remove all at once
+helm uninstall elasticsearch kibana logstash -n elastic
+
+# Remove persistent volumes
 kubectl delete pvc -n elastic -l app=elasticsearch
 
-# Remove registry
+# Remove namespace (if desired)
+kubectl delete namespace elastic
+
+# Remove Docker registry
 cd epr_deployment
 ./nuke_registry.sh
+
+# Uninstall k3s completely (if desired)
+cd ../deployment_infrastructure
+./uninstall-k3s-complete.sh
 ```
+
+## Deploying the Full Elastic Stack
+
+The deployment script now supports deploying all three components: **Elasticsearch**, **Kibana**, and **Logstash**. The script will interactively prompt you before installing each component.
+
+### Interactive Deployment
+
+```bash
+cd helm_charts
+./deploy.sh
+```
+
+The script will ask you to confirm each component:
+- **Deploy Elasticsearch?** (y/n) - Core search and analytics engine
+- **Deploy Kibana?** (y/n) - Web UI for visualization and management
+- **Deploy Logstash?** (y/n) - Data processing pipeline
+
+You can choose to deploy all components or select specific ones based on your needs.
+
+### Accessing Kibana from Your Local Machine
+
+Once Kibana is deployed, you can access it from your local browser using SSH tunneling:
+
+**Step 1: Create SSH Tunnel**
+```bash
+ssh -i "Brian_M_12_25.pem" -L 5601:localhost:5601 ubuntu@44.212.32.213
+```
+
+**Step 2: Port-forward Kibana Service (on remote server)**
+```bash
+kubectl port-forward -n elastic svc/kibana 5601:5601
+```
+
+**Step 3: Access in Browser**
+Open your local browser and navigate to:
+```
+http://localhost:5601
+```
+
+The SSH tunnel forwards port 5601 from your local machine to the remote server, where kubectl port-forwards from the Kubernetes service to localhost on the server.
+
+## Initial Setup Scripts
+
+### Setup Script
+
+Before deploying, run the setup script to prepare your machine and optionally clone additional repositories:
+
+```bash
+./deployment_infrastructure/setup-machine.sh
+```
+
+This script will:
+- Install essential tools (git, curl, wget, etc.)
+- Configure system settings for Kubernetes
+- Prompt to clone other required repositories if needed
+- Set up directory structure
+
+### Installing Kubernetes (k3s)
+
+Install k3s in air-gapped mode using the included script:
+
+```bash
+./deployment_infrastructure/install-k3s-airgap.sh
+```
+
+This script:
+- Installs k3s from local binaries (no internet required)
+- Configures kubeconfig at `/etc/rancher/k3s/k3s.yaml`
+- Sets up kubectl symlink
+- Starts k3s service
+- Verifies cluster is running
+
+**Note:** The install script requires k3s binaries collected by `collect-all.sh` in the `deployment_infrastructure/k3s-files/` directory.
+
+### Collecting Additional Images
+
+The `collect-all.sh` script can be **re-run multiple times** to add more container images to your collection:
+
+```bash
+cd deployment_infrastructure
+./collect-all.sh
+```
+
+Each run will:
+- Prompt for new image URLs
+- Download and save images alongside existing ones
+- Skip already-downloaded images
+- Update the image list
+
+This is useful when you need to:
+- Add new Elastic Stack plugins
+- Include additional monitoring tools
+- Update to newer versions
+- Add custom applications to your air-gapped environment
 
 ## Next Steps
 
-1. Deploy Kibana using similar Helm chart
-2. Deploy Logstash for data processing
-3. Enable X-Pack security for production
-4. Configure ingress for external access
-5. Set up monitoring and alerting
-6. Configure snapshot backups
+1. Enable X-Pack security for production
+2. Configure ingress for external access
+3. Set up monitoring and alerting
+4. Configure snapshot backups
+5. Add Beats (Filebeat, Metricbeat) for data collection
 
 ## Support
 
