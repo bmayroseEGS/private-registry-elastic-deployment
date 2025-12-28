@@ -1,6 +1,6 @@
 # Getting Started - Complete Setup Guide
 
-Complete guide from fresh Ubuntu machine to deployed Elasticsearch cluster.
+Complete guide from fresh Ubuntu machine to deployed Elastic Stack (Elasticsearch, Kibana, Logstash) cluster.
 
 ## Overview
 
@@ -61,7 +61,7 @@ docker run hello-world
 Once Docker is set up, collect images and k3s:
 
 ```bash
-cd helm-fleet-deployment/deployment_infrastructure
+cd private-registry-elastic-deployment/deployment_infrastructure
 ./collect-all.sh
 ```
 
@@ -92,12 +92,12 @@ Transfer directories to air-gapped machine:
 cp -r deployment_infrastructure/ /media/usb/
 
 # On air-gapped machine
-cp -r /media/usb/deployment_infrastructure ~/helm-fleet-deployment/
+cp -r /media/usb/deployment_infrastructure ~/private-registry-elastic-deployment/
 ```
 
 ### Option B: SCP (if limited network)
 ```bash
-scp -r deployment_infrastructure/ user@airgapped:~/helm-fleet-deployment/
+scp -r deployment_infrastructure/ user@airgapped:~/private-registry-elastic-deployment/
 ```
 
 ---
@@ -107,7 +107,7 @@ scp -r deployment_infrastructure/ user@airgapped:~/helm-fleet-deployment/
 ### Step 1: Install k3s
 
 ```bash
-cd ~/helm-fleet-deployment/deployment_infrastructure
+cd ~/private-registry-elastic-deployment/deployment_infrastructure
 ./install-k3s-airgap.sh
 ```
 
@@ -135,7 +135,7 @@ kubectl get nodes
 ## Phase 4: Deploy Registry (Air-gapped Machine)
 
 ```bash
-cd ~/helm-fleet-deployment/epr_deployment
+cd ~/private-registry-elastic-deployment/epr_deployment
 ./epr.sh
 ```
 
@@ -160,38 +160,44 @@ curl http://localhost:5000/v2/_catalog
 
 ---
 
-## Phase 5: Deploy Elasticsearch (Air-gapped Machine)
+## Phase 5: Deploy Elastic Stack (Air-gapped Machine)
 
 ```bash
-cd ~/helm-fleet-deployment/helm_charts
+cd ~/private-registry-elastic-deployment/helm_charts
 ./deploy.sh
 ```
 
 **What it does:**
 - ✅ Checks prerequisites (kubectl, helm, registry)
 - ✅ Creates 'elastic' namespace
-- ✅ Deploys Elasticsearch Helm chart
+- ✅ Interactively prompts for each component:
+  - Deploy Elasticsearch? (y/n)
+  - Deploy Kibana? (y/n)
+  - Deploy Logstash? (y/n)
+- ✅ Deploys selected Helm charts
 - ✅ Waits for pods to be ready
 - ✅ Displays status and access instructions
 
 **Expected output:**
 ```
-NAME               READY   STATUS    AGE
-elasticsearch-master-0   1/1     Running   2m
+NAME                       READY   STATUS    AGE
+elasticsearch-master-0     1/1     Running   2m
+kibana-xxxx                1/1     Running   1m
+logstash-0                 1/1     Running   1m
 ```
 
 ---
 
-## Phase 6: Access Elasticsearch
+## Phase 6: Access Services
 
-### Port-forward Method (Recommended for testing)
+### Elasticsearch
 
 ```bash
 # Start port-forward (keep this running)
 kubectl port-forward -n elastic svc/elasticsearch-master 9200:9200
 ```
 
-### In another terminal:
+In another terminal:
 ```bash
 # Test connection
 curl http://localhost:9200
@@ -207,6 +213,42 @@ curl http://localhost:9200/_cluster/health?pretty
 }
 ```
 
+### Kibana
+
+**From Remote Server (Direct):**
+```bash
+kubectl port-forward -n elastic svc/kibana 5601:5601
+curl http://localhost:5601
+```
+
+**From Local Machine (via SSH Tunnel):**
+```bash
+# Step 1: Create SSH tunnel from local to remote
+ssh -i "your-key.pem" -L 5601:localhost:5601 ubuntu@your-server-ip
+
+# Step 2: On remote server, port-forward Kibana
+kubectl port-forward -n elastic svc/kibana 5601:5601
+
+# Step 3: Open browser on local machine
+# Navigate to: http://localhost:5601
+```
+
+### Logstash
+
+```bash
+# Port-forward HTTP input
+kubectl port-forward -n elastic svc/logstash 8080:8080
+
+# In another terminal, send test event
+curl -X POST http://localhost:8080 \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"test event","source":"manual"}'
+
+# Check Logstash monitoring
+kubectl port-forward -n elastic svc/logstash 9600:9600
+curl http://localhost:9600/_node/stats?pretty
+```
+
 ---
 
 ## Quick Reference: When to Use Each Script
@@ -217,7 +259,7 @@ curl http://localhost:9200/_cluster/health?pretty
 | collect-all.sh | Internet | Collect images/k3s | Once (or when updating) |
 | install-k3s-airgap.sh | Air-gapped | Install k3s | Once per cluster |
 | epr.sh | Air-gapped | Deploy registry | Once per machine |
-| deploy.sh | Air-gapped | Deploy Elasticsearch | Once per cluster |
+| deploy.sh | Air-gapped | Deploy Elastic Stack | Once per cluster |
 
 ## Troubleshooting
 
@@ -294,12 +336,14 @@ cd ../../epr_deployment
 ./epr.sh
 curl http://localhost:5000/v2/_catalog  # Verify
 
-# Deploy Elasticsearch
+# Deploy Elastic Stack
 cd ../helm_charts
 ./deploy.sh
+# Interactive prompts for Elasticsearch, Kibana, Logstash
 
-# Access Elasticsearch
+# Access services
 kubectl port-forward -n elastic svc/elasticsearch-master 9200:9200 &
+kubectl port-forward -n elastic svc/kibana 5601:5601 &
 curl http://localhost:9200
 ```
 
@@ -310,8 +354,8 @@ curl http://localhost:9200
 To remove everything and start fresh:
 
 ```bash
-# Remove Elasticsearch
-helm uninstall elasticsearch -n elastic
+# Remove Elastic Stack components
+helm uninstall elasticsearch kibana logstash -n elastic
 kubectl delete pvc -n elastic -l app=elasticsearch
 
 # Remove registry
@@ -319,7 +363,7 @@ cd epr_deployment
 ./nuke_registry.sh
 
 # Remove k3s
-cd ../deployment_infrastructure/k3s-files
+cd ../deployment_infrastructure
 ./uninstall-k3s-complete.sh
 ```
 
@@ -334,13 +378,15 @@ After successful deployment:
    helm upgrade elasticsearch ./elasticsearch -n elastic --set replicas=3
    ```
 
-2. **Deploy Kibana** - Create similar Helm chart
+2. **Enable Security** - Configure X-Pack security, TLS certificates
 
-3. **Enable Security** - Configure X-Pack security, TLS
+3. **Set up Monitoring** - Enable Elastic Stack monitoring features
 
-4. **Set up Monitoring** - Deploy Elastic monitoring stack
+4. **Configure Backups** - Set up Elasticsearch snapshot repository
 
-5. **Configure Backups** - Set up snapshot repository
+5. **Deploy Beats** - Add Filebeat, Metricbeat for data collection
+
+6. **Configure Ingress** - Expose services externally
 
 ---
 

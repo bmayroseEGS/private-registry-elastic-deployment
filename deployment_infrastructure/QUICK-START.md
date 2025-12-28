@@ -1,6 +1,6 @@
 # Quick Start - Air-gapped Elastic Stack Deployment
 
-Complete workflow from scratch to running Elasticsearch on Kubernetes.
+Complete workflow from scratch to running Elastic Stack (Elasticsearch, Kibana, Logstash) on Kubernetes.
 
 ## Overview
 
@@ -9,7 +9,7 @@ Four simple scripts handle everything:
 2. **collect-all.sh** - Collect images and k3s (internet-connected machine)
 3. **install-k3s-airgap.sh** - Install Kubernetes (air-gapped machine)
 4. **epr.sh** - Deploy registry (air-gapped machine)
-5. **deploy.sh** - Deploy Elasticsearch (air-gapped machine)
+5. **deploy.sh** - Deploy Elastic Stack (air-gapped machine)
 
 ## Step-by-Step Workflow
 
@@ -46,7 +46,7 @@ registry:2
 
 ```bash
 # Copy entire deployment_infrastructure folder
-scp -r deployment_infrastructure/ user@airgapped-machine:~/helm-fleet-deployment/
+scp -r deployment_infrastructure/ user@airgapped-machine:~/private-registry-elastic-deployment/
 ```
 
 ### Phase 3: Install Kubernetes (Air-gapped Machine)
@@ -77,41 +77,64 @@ cd ../epr_deployment
 # Deploys registry at localhost:5000 with all your images
 ```
 
-### Phase 5: Deploy Elasticsearch (Air-gapped Machine)
+### Phase 5: Deploy Elastic Stack (Air-gapped Machine)
 
 ```bash
 cd ../helm_charts
 ./deploy.sh
 
-# Deploys Elasticsearch to Kubernetes
+# Interactively prompts:
+# Deploy Elasticsearch? (y/n): y
+# Deploy Kibana? (y/n): y
+# Deploy Logstash? (y/n): y
 ```
 
-### Phase 6: Access Elasticsearch
+### Phase 6: Access Services
 
+**Elasticsearch:**
 ```bash
-# Port-forward
 kubectl port-forward -n elastic svc/elasticsearch-master 9200:9200
-
-# In another terminal, test
 curl http://localhost:9200
 curl http://localhost:9200/_cluster/health?pretty
+```
+
+**Kibana (via SSH tunnel from local machine):**
+```bash
+# On local machine
+ssh -i "key.pem" -L 5601:localhost:5601 ubuntu@server-ip
+
+# On remote server
+kubectl port-forward -n elastic svc/kibana 5601:5601
+
+# Open browser: http://localhost:5601
+```
+
+**Logstash:**
+```bash
+kubectl port-forward -n elastic svc/logstash 8080:8080
+curl -X POST http://localhost:8080 -H 'Content-Type: application/json' -d '{"message":"test"}'
 ```
 
 ## File Locations After Setup
 
 ```
-~/helm-fleet-deployment/
-├── images/                          # Container images
-│   └── *.tar
-├── k3s-files/                       # k3s installation
+~/private-registry-elastic-deployment/
+├── deployment_infrastructure/
+│   ├── collect-all.sh
 │   ├── install-k3s-airgap.sh       # ← RUN THIS
-│   ├── k3s
-│   ├── k3s-airgap-images-amd64.tar.gz
-│   └── install-k3s.sh
+│   ├── k3s-files/                  # k3s installation
+│   │   ├── k3s
+│   │   └── k3s-airgap-images-amd64.tar
+│   └── helm-files/helm
 ├── epr_deployment/
-│   └── epr.sh                       # ← RUN THIS
+│   ├── epr.sh                      # ← RUN THIS
+│   └── images/                     # Container images
+│       └── *.tar
 └── helm_charts/
-    └── deploy.sh                    # ← RUN THIS
+    ├── deploy.sh                   # ← RUN THIS
+    ├── elasticsearch/
+    ├── kibana/
+    └── logstash/
 ```
 
 ## Common Commands
@@ -171,8 +194,8 @@ kubectl logs -n elastic elasticsearch-master-0
 ## Clean Up
 
 ```bash
-# Remove Elasticsearch
-helm uninstall elasticsearch -n elastic
+# Remove Elastic Stack
+helm uninstall elasticsearch kibana logstash -n elastic
 kubectl delete pvc -n elastic -l app=elasticsearch
 
 # Remove registry
@@ -180,15 +203,17 @@ cd epr_deployment
 ./nuke_registry.sh
 
 # Remove k3s
-/usr/local/bin/k3s-uninstall.sh
+cd ../deployment_infrastructure
+./uninstall-k3s-complete.sh
 ```
 
 ## Next Steps
 
 - Scale Elasticsearch: `helm upgrade elasticsearch ./elasticsearch -n elastic --set replicas=3`
-- Deploy Kibana: Create similar chart
-- Enable security: Configure X-Pack
-- Set up backups: Configure snapshots
+- Enable security: Configure X-Pack security and TLS
+- Set up monitoring: Enable Elastic Stack monitoring
+- Configure backups: Set up Elasticsearch snapshots
+- Deploy Beats: Add Filebeat, Metricbeat for data collection
 
 ## Complete Documentation
 

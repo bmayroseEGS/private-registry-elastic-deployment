@@ -3,10 +3,12 @@
 ## Overview
 
 `collect-all.sh` is an enhanced version of `collect-images.sh` that collects **both**:
-1. Container images (Elasticsearch, Kibana, etc.)
+1. Container images (Elasticsearch, Kibana, Logstash, etc.)
 2. k3s components (for Kubernetes installation)
 
 This is the **recommended script** for complete air-gapped deployments.
+
+**Can be re-run multiple times** to add more container images to your collection without re-downloading existing images.
 
 ## What It Collects
 
@@ -26,7 +28,7 @@ This is the **recommended script** for complete air-gapped deployments.
 ### On Internet-Connected Machine
 
 ```bash
-cd epr_deployment
+cd deployment_infrastructure
 ./collect-all.sh
 ```
 
@@ -36,6 +38,8 @@ The script will:
 3. Pull and save each image as .tar file
 4. Ask if you want to download k3s components
 5. Display summary and next steps
+
+**Note:** You can re-run this script multiple times to add more images. Already-downloaded images will be skipped.
 
 ### Example Session
 
@@ -111,76 +115,62 @@ Download k3s components for version v1.30.0+k3s1? (y/n): y
 After running, you'll have:
 
 ```
-epr_deployment/
+deployment_infrastructure/
 ├── collect-all.sh
-├── images/                                    # Container images
-│   ├── docker.elastic.co_elasticsearch_elasticsearch_9.2.2.tar
-│   ├── docker.elastic.co_kibana_kibana_9.2.2.tar
-│   └── registry_2.tar
-└── k3s-files/                                 # k3s components
-    ├── k3s                                    # k3s binary
-    ├── k3s-airgap-images-amd64.tar.gz        # Required images
-    ├── install-k3s.sh                         # Install script
-    └── INSTALL-K3S.md                         # Instructions
+├── install-k3s-airgap.sh                      # Automated k3s install script
+├── uninstall-k3s-complete.sh                  # Complete k3s removal
+├── k3s-files/                                 # k3s components
+│   ├── k3s                                    # k3s binary
+│   └── k3s-airgap-images-amd64.tar           # Required images
+└── helm-files/                                # Helm binary
+    └── helm
+
+epr_deployment/
+└── images/                                    # Container images
+    ├── docker.elastic.co_elasticsearch_elasticsearch_9.2.2.tar
+    ├── docker.elastic.co_kibana_kibana_9.2.2.tar
+    ├── docker.elastic.co_logstash_logstash_9.2.2.tar
+    └── registry_2.tar
 ```
 
 ## Transfer to Air-gapped Machine
 
 ### Option A: USB Drive
 ```bash
-# Copy directories to USB
-cp -r images/ k3s-files/ /media/usb/
+# Copy entire deployment_infrastructure folder to USB
+cp -r deployment_infrastructure/ /media/usb/
 
 # On air-gapped machine
-cp -r /media/usb/images/ /media/usb/k3s-files/ ~/epr_deployment/
+cp -r /media/usb/deployment_infrastructure/ ~/private-registry-elastic-deployment/
 ```
 
 ### Option B: SCP (limited network)
 ```bash
-scp -r images/ k3s-files/ user@airgapped-machine:~/epr_deployment/
+# Transfer entire deployment_infrastructure folder
+scp -r deployment_infrastructure/ user@airgapped-machine:~/private-registry-elastic-deployment/
 ```
 
 ## Installation on Air-gapped Machine
 
-### Step 1: Install k3s (if collected)
+### Step 1: Install k3s (Automated)
 
 ```bash
-cd k3s-files
-cat INSTALL-K3S.md  # Read full instructions
+cd deployment_infrastructure
+./install-k3s-airgap.sh
+# Fully automated script that:
+# - Installs k3s binary and airgap images
+# - Configures kubeconfig with permissions
+# - Sets up localhost:5000 registry support
+# - Verifies installation
 
-# Quick install:
-sudo mkdir -p /var/lib/rancher/k3s/agent/images/
-sudo cp k3s-airgap-images-amd64.tar.gz /var/lib/rancher/k3s/agent/images/
-INSTALL_K3S_SKIP_DOWNLOAD=true ./install-k3s.sh
-
-# Configure kubeconfig
-export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-echo 'export KUBECONFIG=/etc/rancher/k3s/k3s.yaml' >> ~/.bashrc
+# Reload shell
+source ~/.bashrc
 
 # Verify
 kubectl get nodes
 ```
 
-### Step 2: Configure k3s for Local Registry
-
-```bash
-sudo mkdir -p /etc/rancher/k3s
-
-cat <<EOF | sudo tee /etc/rancher/k3s/registries.yaml
-mirrors:
-  localhost:5000:
-    endpoint:
-      - "http://localhost:5000"
-configs:
-  "localhost:5000":
-    tls:
-      insecure_skip_verify: true
-EOF
-
-sudo systemctl restart k3s
-```
-
-### Step 3: Deploy Local Registry
+### Step 2: Deploy Local Registry
 
 ```bash
 cd ../epr_deployment
@@ -188,12 +178,40 @@ cd ../epr_deployment
 # Registry will be deployed at localhost:5000 with all your images
 ```
 
-### Step 4: Deploy Elasticsearch to Kubernetes
+### Step 3: Deploy Elastic Stack to Kubernetes
 
 ```bash
 cd ../helm_charts
 ./deploy.sh
-# Elasticsearch will be deployed to the 'elastic' namespace
+# Interactively prompts:
+# - Deploy Elasticsearch? (y/n)
+# - Deploy Kibana? (y/n)
+# - Deploy Logstash? (y/n)
+```
+
+### Step 4: Access Services
+
+**Elasticsearch:**
+```bash
+kubectl port-forward -n elastic svc/elasticsearch-master 9200:9200
+curl http://localhost:9200
+```
+
+**Kibana (via SSH tunnel from local machine):**
+```bash
+# On local machine
+ssh -i "your-key.pem" -L 5601:localhost:5601 ubuntu@server-ip
+
+# On remote server
+kubectl port-forward -n elastic svc/kibana 5601:5601
+
+# Open browser: http://localhost:5601
+```
+
+**Logstash:**
+```bash
+kubectl port-forward -n elastic svc/logstash 8080:8080
+curl -X POST http://localhost:8080 -H 'Content-Type: application/json' -d '{"message":"test"}'
 ```
 
 ## Common Image URLs
@@ -265,6 +283,24 @@ Download k3s components for version v1.30.0+k3s1? (y/n): n
 ### Collect Only Specific Images
 
 Just enter the images you need when prompted, skip the rest.
+
+### Re-running to Add More Images
+
+You can run `collect-all.sh` multiple times to add more images:
+
+```bash
+cd deployment_infrastructure
+./collect-all.sh
+# Enter new image URLs
+# Already-downloaded images will be skipped
+# New images will be added to images/ directory
+```
+
+This is useful when:
+- Adding new Elastic Stack components or plugins
+- Updating to newer versions
+- Including additional monitoring tools
+- Adding custom applications to your air-gapped environment
 
 ## See Also
 

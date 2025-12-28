@@ -1,44 +1,44 @@
-# Elasticsearch Helm Chart for Air-gapped Deployment
+# Elastic Stack Helm Charts for Air-gapped Deployment
 
-This Helm chart deploys Elasticsearch to a Kubernetes cluster using images from a local container registry.
+This directory contains Helm charts for deploying the complete Elastic Stack (Elasticsearch, Kibana, Logstash) to a Kubernetes cluster using images from a local container registry.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Kubernetes Cluster                    │
-│                                                          │
-│  ┌────────────────────────────────────────────────────┐ │
-│  │              Namespace: elastic                     │ │
-│  │                                                     │ │
-│  │  ┌──────────────────────────────────────────────┐  │ │
-│  │  │         StatefulSet: elasticsearch           │  │ │
-│  │  │                                              │  │ │
-│  │  │  ┌────────────┐  ┌────────────┐             │  │ │
-│  │  │  │   Pod 1    │  │   Pod 2    │   ...       │  │ │
-│  │  │  │            │  │            │             │  │ │
-│  │  │  │  ES:9200   │  │  ES:9200   │             │  │ │
-│  │  │  │  ES:9300   │  │  ES:9300   │             │  │ │
-│  │  │  └─────┬──────┘  └─────┬──────┘             │  │ │
-│  │  │        │               │                    │  │ │
-│  │  │        └───────┬───────┘                    │  │ │
-│  │  └────────────────┼────────────────────────────┘  │ │
-│  │                   │                               │ │
-│  │         ┌─────────┴─────────┐                     │ │
-│  │         │                   │                     │ │
-│  │  ┌──────▼───────┐    ┌─────▼──────┐              │ │
-│  │  │  Service     │    │ Headless   │              │ │
-│  │  │ ClusterIP    │    │  Service   │              │ │
-│  │  │   :9200      │    │ (StatefulSet)             │ │
-│  │  └──────────────┘    └────────────┘              │ │
-│  │                                                   │ │
-│  │  ┌──────────────────────────────────────┐        │ │
-│  │  │  PersistentVolumeClaims (PVC)        │        │ │
-│  │  │  - data-elasticsearch-master-0       │        │ │
-│  │  │  - data-elasticsearch-master-1       │        │ │
-│  │  └──────────────────────────────────────┘        │ │
-│  └───────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                    Kubernetes Cluster                            │
+│                                                                  │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │              Namespace: elastic                             │ │
+│  │                                                             │ │
+│  │  ┌──────────────────────────────────────────────┐          │ │
+│  │  │  StatefulSet: elasticsearch-master           │          │ │
+│  │  │  • Pod: elasticsearch-master-0               │          │ │
+│  │  │  • Image: localhost:5000/elasticsearch:9.2.2 │          │ │
+│  │  │  • Ports: 9200, 9300                         │          │ │
+│  │  │  • Volume: 30Gi PVC                          │          │ │
+│  │  └──────────────────────────────────────────────┘          │ │
+│  │                                                             │ │
+│  │  ┌──────────────────────────────────────────────┐          │ │
+│  │  │  Deployment: kibana                          │          │ │
+│  │  │  • Pod: kibana-xxxx                          │          │ │
+│  │  │  • Image: localhost:5000/kibana:9.2.2        │          │ │
+│  │  │  • Port: 5601                                │          │ │
+│  │  └──────────────────────────────────────────────┘          │ │
+│  │                                                             │ │
+│  │  ┌──────────────────────────────────────────────┐          │ │
+│  │  │  StatefulSet: logstash                       │          │ │
+│  │  │  • Pod: logstash-0                           │          │ │
+│  │  │  • Image: localhost:5000/logstash:9.2.2      │          │ │
+│  │  │  • Ports: 5044, 8080, 9600                   │          │ │
+│  │  └──────────────────────────────────────────────┘          │ │
+│  │                                                             │ │
+│  │  Services:                                                  │ │
+│  │  - elasticsearch-master (ClusterIP:9200)                    │ │
+│  │  - kibana (ClusterIP:5601)                                  │ │
+│  │  - logstash (ClusterIP:5044,8080,9600)                      │ │
+│  └─────────────────────────────────────────────────────────────┘ │
+└───────────────────────────────────────────────────────────────────┘
                          │
                          │ pulls images from
                          ▼
@@ -56,12 +56,12 @@ This Helm chart deploys Elasticsearch to a Kubernetes cluster using images from 
 
 1. **Kubernetes cluster** - Running and accessible via kubectl
 2. **Helm 3.x** - Installed and configured
-3. **Local registry** - Running with Elasticsearch images loaded (see [../epr_deployment](../epr_deployment))
+3. **Local registry** - Running with Elastic Stack images loaded (see [../epr_deployment](../epr_deployment))
 4. **kubectl access** - Configured to access your cluster
 
 ## Quick Start
 
-### 1. Deploy using the script
+### 1. Deploy using the script (Recommended)
 
 ```bash
 cd helm_charts
@@ -72,7 +72,11 @@ The script will:
 - Check prerequisites (kubectl, helm, cluster access)
 - Verify local registry is accessible
 - Create namespace
-- Deploy Elasticsearch
+- Interactively prompt for each component:
+  - Deploy Elasticsearch? (y/n)
+  - Deploy Kibana? (y/n)
+  - Deploy Logstash? (y/n)
+- Deploy selected components
 - Wait for pods to be ready
 - Display status and access instructions
 
@@ -82,8 +86,20 @@ The script will:
 # Create namespace
 kubectl create namespace elastic
 
-# Install the chart
+# Install Elasticsearch
 helm install elasticsearch ./elasticsearch \
+  --namespace elastic \
+  --wait \
+  --timeout 10m
+
+# Install Kibana
+helm install kibana ./kibana \
+  --namespace elastic \
+  --wait \
+  --timeout 10m
+
+# Install Logstash
+helm install logstash ./logstash \
   --namespace elastic \
   --wait \
   --timeout 10m
@@ -94,9 +110,9 @@ kubectl get pods -n elastic
 
 ## Configuration
 
-### Key Configuration Options
+### Elasticsearch Configuration
 
-Edit [values.yaml](elasticsearch/values.yaml) to customize:
+Edit [elasticsearch/values.yaml](elasticsearch/values.yaml) to customize:
 
 #### Image Configuration
 ```yaml
@@ -130,17 +146,39 @@ persistence:
   storageClass: ""  # Use default or specify
 ```
 
-#### Node Roles
+### Kibana Configuration
+
+Edit [kibana/values.yaml](kibana/values.yaml) to customize:
+
 ```yaml
-roles:
-  - master  # Can be elected master
-  - data    # Stores data
-  - ingest  # Processes documents
+image:
+  registry: localhost:5000
+  repository: kibana
+  tag: "9.2.2"
+
+replicas: 1
+
+elasticsearchHosts: "http://elasticsearch-master:9200"
 ```
 
-## Accessing Elasticsearch
+### Logstash Configuration
 
-### Port-forward Method (Development)
+Edit [logstash/values.yaml](logstash/values.yaml) to customize:
+
+```yaml
+image:
+  registry: localhost:5000
+  repository: logstash
+  tag: "9.2.2"
+
+replicas: 1
+
+elasticsearchHosts: "http://elasticsearch-master:9200"
+```
+
+## Accessing Services
+
+### Elasticsearch (Port-forward Method)
 
 ```bash
 # Forward port 9200 to localhost
@@ -149,6 +187,44 @@ kubectl port-forward -n elastic svc/elasticsearch-master 9200:9200
 # In another terminal
 curl http://localhost:9200
 curl http://localhost:9200/_cluster/health?pretty
+```
+
+### Kibana (Port-forward Method)
+
+```bash
+# Forward port 5601 to localhost
+kubectl port-forward -n elastic svc/kibana 5601:5601
+
+# Open browser: http://localhost:5601
+```
+
+### Kibana (SSH Tunnel from Local Machine)
+
+```bash
+# Step 1: Create SSH tunnel from local to remote
+ssh -i "your-key.pem" -L 5601:localhost:5601 ubuntu@your-server-ip
+
+# Step 2: On remote server, port-forward Kibana
+kubectl port-forward -n elastic svc/kibana 5601:5601
+
+# Step 3: Open browser on local machine
+# Navigate to: http://localhost:5601
+```
+
+### Logstash (HTTP Input)
+
+```bash
+# Port-forward HTTP input
+kubectl port-forward -n elastic svc/logstash 8080:8080
+
+# Send test event
+curl -X POST http://localhost:8080 \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"test event","source":"manual"}'
+
+# Check Logstash monitoring
+kubectl port-forward -n elastic svc/logstash 9600:9600
+curl http://localhost:9600/_node/stats?pretty
 ```
 
 ### NodePort Method (Testing)
@@ -220,16 +296,27 @@ esConfig:
 
 ### Check Pod Status
 ```bash
+# All pods in namespace
+kubectl get pods -n elastic
+
+# Specific components
 kubectl get pods -n elastic -l app=elasticsearch
+kubectl get pods -n elastic -l app=kibana
+kubectl get pods -n elastic -l app=logstash
 ```
 
 ### View Logs
 ```bash
-# All pods
+# Elasticsearch
 kubectl logs -n elastic -l app=elasticsearch -f
-
-# Specific pod
 kubectl logs -n elastic elasticsearch-master-0 -f
+
+# Kibana
+kubectl logs -n elastic -l app=kibana -f
+
+# Logstash
+kubectl logs -n elastic -l app=logstash -f
+kubectl logs -n elastic logstash-0 -f
 ```
 
 ### Check Cluster Health
@@ -318,8 +405,13 @@ affinity:
 ## Uninstalling
 
 ```bash
-# Remove the Helm release
+# Remove individual components
 helm uninstall elasticsearch -n elastic
+helm uninstall kibana -n elastic
+helm uninstall logstash -n elastic
+
+# Or remove all at once
+helm uninstall elasticsearch kibana logstash -n elastic
 
 # Optionally delete PVCs (WARNING: deletes data!)
 kubectl delete pvc -n elastic -l app=elasticsearch
@@ -354,24 +446,46 @@ esConfig:
 
 ## Next Steps
 
-1. **Deploy Kibana** - Create similar chart for Kibana
-2. **Deploy Logstash** - Add data processing pipeline
-3. **Configure Backups** - Set up snapshot repository
-4. **Enable Monitoring** - Use Elastic Stack monitoring
-5. **Production Hardening** - Enable security, TLS, RBAC
+1. **Scale Elasticsearch** - Increase to 3+ nodes for production
+2. **Configure Backups** - Set up snapshot repository
+3. **Enable Monitoring** - Use Elastic Stack monitoring
+4. **Production Hardening** - Enable security, TLS, RBAC
+5. **Deploy Beats** - Add Filebeat, Metricbeat for data collection
+6. **Configure Ingress** - Expose services externally
 
 ## File Structure
 
 ```
-elasticsearch/
-├── Chart.yaml              # Chart metadata
-├── values.yaml            # Default configuration
-├── templates/
-│   ├── statefulset.yaml   # Main Elasticsearch deployment
-│   ├── service.yaml       # Services (ClusterIP + Headless)
-│   ├── configmap.yaml     # Elasticsearch configuration
-│   └── NOTES.txt          # Post-install instructions
-└── charts/                # Dependencies (none currently)
+helm_charts/
+├── deploy.sh                  # Interactive deployment script
+│
+├── elasticsearch/             # Elasticsearch Helm chart
+│   ├── Chart.yaml
+│   ├── values.yaml
+│   └── templates/
+│       ├── statefulset.yaml
+│       ├── service.yaml
+│       ├── configmap.yaml
+│       └── NOTES.txt
+│
+├── kibana/                    # Kibana Helm chart
+│   ├── Chart.yaml
+│   ├── values.yaml
+│   └── templates/
+│       ├── deployment.yaml
+│       ├── service.yaml
+│       ├── configmap.yaml
+│       └── NOTES.txt
+│
+└── logstash/                  # Logstash Helm chart
+    ├── Chart.yaml
+    ├── values.yaml
+    └── templates/
+        ├── statefulset.yaml
+        ├── service.yaml
+        ├── configmap-config.yaml
+        ├── configmap-pipeline.yaml
+        └── NOTES.txt
 ```
 
 ## Support
