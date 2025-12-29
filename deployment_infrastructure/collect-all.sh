@@ -610,16 +610,27 @@ download_helm() {
         fi
 
         # Verify the binary
-        if [ -f "./helm" ] && ./helm version &> /dev/null; then
-            # Get version without terminal corruption (redirect all output properly)
-            local helm_version=$(./helm version --short 2>&1 | head -1 | tr -d '\r\n' | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' || echo "version")
-            print_info "✓ Helm binary verified: ${helm_version}"
+        if [ -f "./helm" ]; then
+            chmod +x ./helm
+            # Get version without terminal corruption - capture to variable first
+            local helm_version_output=$(./helm version --short 2>&1 | head -1 | cat)
+            local helm_version=$(echo "$helm_version_output" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' || echo "unknown")
+
+            if [ "$helm_version" != "unknown" ]; then
+                print_info "✓ Helm binary verified: ${helm_version}"
+            else
+                print_warning "⚠ Helm binary exists but version could not be determined"
+            fi
         else
-            print_warning "⚠ Could not verify Helm binary"
+            print_warning "⚠ Could not find Helm binary after extraction"
         fi
 
         # Keep the tarball for reference but we only need the binary
         print_info "Binary ready for air-gapped installation"
+
+        # Clean up tarball to save space (optional)
+        rm -f "$helm_tarball" 2>/dev/null
+        print_info "Cleaned up temporary tarball"
     else
         print_error "✗ Failed to download Helm from: $helm_url"
         print_warning "The download failed (possibly 404 Not Found)"
@@ -642,15 +653,22 @@ download_helm() {
                 if wget -q --show-progress "$helm_url" -O "$helm_tarball" 2>&1; then
                     print_info "✓ Helm tarball downloaded"
 
-                    if tar -xzf "$helm_tarball" linux-amd64/helm --strip-components=1; then
+                    if tar -xzf "$helm_tarball" linux-amd64/helm --strip-components=1 2>/dev/null; then
                         print_info "✓ Helm binary extracted"
                         chmod +x helm
 
-                        if ./helm version &> /dev/null; then
-                            # Get version without terminal corruption (redirect all output properly)
-                            local helm_version=$(./helm version --short 2>&1 | head -1 | tr -d '\r\n' | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' || echo "version")
-                            print_info "✓ Helm binary verified: ${helm_version}"
+                        if [ -f "./helm" ]; then
+                            local helm_version_output=$(./helm version --short 2>&1 | head -1 | cat)
+                            local helm_version=$(echo "$helm_version_output" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' || echo "unknown")
+
+                            if [ "$helm_version" != "unknown" ]; then
+                                print_info "✓ Helm binary verified: ${helm_version}"
+                            fi
                         fi
+
+                        # Clean up tarball
+                        rm -f "$helm_tarball"
+                        print_info "Cleaned up temporary tarball"
                     fi
                 fi
             else
@@ -664,52 +682,59 @@ download_helm() {
     fi
 
     # Create installation instructions
-    cat > INSTALL-HELM.md <<EOF
-# Helm Air-gapped Installation Instructions
-
-## Files in this directory:
-- \`helm\` - The Helm binary (${selected_version})
-- \`helm-${selected_version}-linux-amd64.tar.gz\` - Original tarball (optional, for reference)
-- \`INSTALL-HELM.md\` - This file
-
-## Quick Installation
-
-The helm_charts/deploy.sh script will automatically install Helm if it's not found.
-You can also install it manually:
-
-### Option 1: Let deploy.sh handle it (Recommended)
-```bash
-cd ../../helm_charts
-./deploy.sh
-```
-
-The deploy.sh script will check for Helm and install it automatically from this directory.
-
-### Option 2: Manual Installation
-```bash
-sudo cp helm /usr/local/bin/helm
-sudo chmod +x /usr/local/bin/helm
-```
-
-### Verify installation
-```bash
-helm version
-```
-
-## Uninstall Helm
-
-```bash
-sudo rm /usr/local/bin/helm
-```
-
-Note: This only removes the binary. Helm deployments (releases) will remain in Kubernetes.
-EOF
+    print_info "Creating installation instructions..."
+    {
+        echo "# Helm Air-gapped Installation Instructions"
+        echo ""
+        echo "## Files in this directory:"
+        echo "- \`helm\` - The Helm binary (${selected_version})"
+        echo "- \`INSTALL-HELM.md\` - This file"
+        echo ""
+        echo "## Quick Installation"
+        echo ""
+        echo "The helm_charts/deploy.sh script will automatically install Helm if it's not found."
+        echo "You can also install it manually:"
+        echo ""
+        echo "### Option 1: Let deploy.sh handle it (Recommended)"
+        echo "\`\`\`bash"
+        echo "cd ../../helm_charts"
+        echo "./deploy.sh"
+        echo "\`\`\`"
+        echo ""
+        echo "The deploy.sh script will check for Helm and install it automatically from this directory."
+        echo ""
+        echo "### Option 2: Manual Installation"
+        echo "\`\`\`bash"
+        echo "sudo cp helm /usr/local/bin/helm"
+        echo "sudo chmod +x /usr/local/bin/helm"
+        echo "\`\`\`"
+        echo ""
+        echo "### Verify installation"
+        echo "\`\`\`bash"
+        echo "helm version"
+        echo "\`\`\`"
+        echo ""
+        echo "## Uninstall Helm"
+        echo ""
+        echo "\`\`\`bash"
+        echo "sudo rm /usr/local/bin/helm"
+        echo "\`\`\`"
+        echo ""
+        echo "Note: This only removes the binary. Helm deployments (releases) will remain in Kubernetes."
+    } > INSTALL-HELM.md
 
     print_info "✓ Installation instructions created: INSTALL-HELM.md"
 
-    cd "$ORIGINAL_DIR"
+    # Return to original directory
+    cd "$ORIGINAL_DIR" || {
+        print_error "Failed to return to original directory: $ORIGINAL_DIR"
+        print_warning "Current directory: $(pwd)"
+        return 1
+    }
 
+    echo ""
     print_header "Helm Download Summary"
+    echo ""
     print_info "Downloaded Helm version: ${selected_version}"
     print_info "Files saved to: $HELM_DIR/"
     print_info "See $HELM_DIR/INSTALL-HELM.md for installation instructions"
@@ -778,6 +803,9 @@ main() {
     echo "Collects container images, k3s components, and Helm"
     echo ""
 
+    # Save the starting directory
+    local MAIN_START_DIR="$(pwd)"
+
     change_to_script_directory
     check_prerequisites
     create_directories
@@ -785,8 +813,14 @@ main() {
     pull_and_save_images
     download_k3s_components
     download_helm
+
+    # Ensure we're in the right directory before summary
+    cd "$MAIN_START_DIR" || print_warning "Could not return to starting directory"
+
+    echo ""
     display_summary
 
+    echo ""
     print_info "Collection complete!"
 }
 
